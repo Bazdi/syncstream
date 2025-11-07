@@ -1,0 +1,47 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  username      String   @unique
+  email         String   @unique
+  passwordHash  String
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  rooms         Room[]
+  subscriptionStatus String @default("free") // free, premium
+}
+
+model Room {
+  id            String   @id @default(uuid())
+  name          String
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [id])
+  currentVideoId String?
+  currentTimestamp Float @default(0)
+  isPlaying     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  queue         QueueItem[]
+}
+
+model QueueItem {
+  id            String   @id @default(uuid())
+  roomId        String
+  room          Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  videoId       String
+  videoTitle    String
+  order         Int
+  createdAt     DateTime @default(now())
+
+  @@unique([roomId, order])
+}
