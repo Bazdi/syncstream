@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import { hasPermission, getUserRoleInRoom } from '../utils/permissions.js';
 
 const prisma = new PrismaClient();
 
@@ -95,6 +96,13 @@ export function setupSocketHandlers(io: Server) {
     // Play event
     socket.on('play', async (data: { roomId: string; timestamp: number }) => {
       const { roomId, timestamp } = data;
+      const userId = (socket as any).userId;
+
+      // Check permission
+      if (!(await hasPermission(userId, roomId, 'canPlay'))) {
+        socket.emit('error', { message: 'You do not have permission to play videos' });
+        return;
+      }
 
       const state = roomStates.get(roomId);
       if (state) {
@@ -115,6 +123,13 @@ export function setupSocketHandlers(io: Server) {
     // Pause event
     socket.on('pause', async (data: { roomId: string; timestamp: number }) => {
       const { roomId, timestamp } = data;
+      const userId = (socket as any).userId;
+
+      // Check permission
+      if (!(await hasPermission(userId, roomId, 'canPause'))) {
+        socket.emit('error', { message: 'You do not have permission to pause videos' });
+        return;
+      }
 
       const state = roomStates.get(roomId);
       if (state) {
@@ -134,6 +149,13 @@ export function setupSocketHandlers(io: Server) {
     // Seek event
     socket.on('seek', async (data: { roomId: string; timestamp: number }) => {
       const { roomId, timestamp } = data;
+      const userId = (socket as any).userId;
+
+      // Check permission
+      if (!(await hasPermission(userId, roomId, 'canSeek'))) {
+        socket.emit('error', { message: 'You do not have permission to seek' });
+        return;
+      }
 
       const state = roomStates.get(roomId);
       if (state) {
@@ -152,6 +174,13 @@ export function setupSocketHandlers(io: Server) {
     // Change video event
     socket.on('change_video', async (data: { roomId: string; videoId: string; timestamp?: number }) => {
       const { roomId, videoId, timestamp = 0 } = data;
+      const userId = (socket as any).userId;
+
+      // Check permission
+      if (!(await hasPermission(userId, roomId, 'canChangeVideo'))) {
+        socket.emit('error', { message: 'You do not have permission to change videos' });
+        return;
+      }
 
       const state = roomStates.get(roomId);
       if (state) {
@@ -168,14 +197,138 @@ export function setupSocketHandlers(io: Server) {
       socket.to(roomId).emit('change_video', { videoId, timestamp });
     });
 
-    // Update queue event
+    // Add video to queue
+    socket.on('add_to_queue', async (data: {
+      roomId: string;
+      video: { videoId: string; videoTitle: string }
+    }) => {
+      const { roomId, video } = data;
+      const userId = (socket as any).userId;
+
+      try {
+        // Check permission
+        if (!(await hasPermission(userId, roomId, 'canAddToQueue'))) {
+          socket.emit('error', { message: 'You do not have permission to add videos to queue' });
+          return;
+        }
+
+        // Get current queue
+        const currentQueue = await prisma.queueItem.findMany({
+          where: { roomId },
+          orderBy: { order: 'asc' }
+        });
+
+        // Add new video
+        await prisma.queueItem.create({
+          data: {
+            roomId,
+            videoId: video.videoId,
+            videoTitle: video.videoTitle,
+            order: currentQueue.length,
+            addedBy: userId,
+          }
+        });
+
+        // Fetch updated queue
+        const updatedQueue = await prisma.queueItem.findMany({
+          where: { roomId },
+          orderBy: { order: 'asc' }
+        });
+
+        // Update in-memory state
+        const state = roomStates.get(roomId);
+        if (state) {
+          state.queue = updatedQueue.map(q => ({
+            videoId: q.videoId,
+            videoTitle: q.videoTitle,
+            order: q.order
+          }));
+        }
+
+        // Broadcast to all users
+        io.to(roomId).emit('queue_updated', { queue: updatedQueue });
+      } catch (error) {
+        console.error('Add to queue error:', error);
+        socket.emit('error', { message: 'Failed to add video to queue' });
+      }
+    });
+
+    // Remove video from queue
+    socket.on('remove_from_queue', async (data: {
+      roomId: string;
+      videoId: string;
+    }) => {
+      const { roomId, videoId } = data;
+      const userId = (socket as any).userId;
+
+      try {
+        // Check permission
+        if (!(await hasPermission(userId, roomId, 'canRemoveFromQueue'))) {
+          socket.emit('error', { message: 'You do not have permission to remove videos from queue' });
+          return;
+        }
+
+        // Remove video
+        await prisma.queueItem.deleteMany({
+          where: {
+            roomId,
+            videoId
+          }
+        });
+
+        // Reorder remaining items
+        const remaining = await prisma.queueItem.findMany({
+          where: { roomId },
+          orderBy: { order: 'asc' }
+        });
+
+        // Update orders
+        for (let i = 0; i < remaining.length; i++) {
+          await prisma.queueItem.update({
+            where: { id: remaining[i].id },
+            data: { order: i }
+          });
+        }
+
+        // Fetch updated queue
+        const updatedQueue = await prisma.queueItem.findMany({
+          where: { roomId },
+          orderBy: { order: 'asc' }
+        });
+
+        // Update in-memory state
+        const state = roomStates.get(roomId);
+        if (state) {
+          state.queue = updatedQueue.map(q => ({
+            videoId: q.videoId,
+            videoTitle: q.videoTitle,
+            order: q.order
+          }));
+        }
+
+        // Broadcast to all users
+        io.to(roomId).emit('queue_updated', { queue: updatedQueue });
+      } catch (error) {
+        console.error('Remove from queue error:', error);
+        socket.emit('error', { message: 'Failed to remove video from queue' });
+      }
+    });
+
+    // Update queue event (for reordering/bulk updates)
     socket.on('update_queue', async (data: {
       roomId: string;
       queue: Array<{ videoId: string; videoTitle: string }>
     }) => {
       const { roomId, queue } = data;
+      const userId = (socket as any).userId;
 
       try {
+        // Check permission for reordering
+        if (!(await hasPermission(userId, roomId, 'canReorderQueue'))) {
+          socket.emit('error', { message: 'You do not have permission to reorder the queue' });
+          return;
+        }
+
         // Delete existing queue items
         await prisma.queueItem.deleteMany({
           where: { roomId }
@@ -186,7 +339,8 @@ export function setupSocketHandlers(io: Server) {
           roomId,
           videoId: item.videoId,
           videoTitle: item.videoTitle,
-          order: index
+          order: index,
+          addedBy: userId,
         }));
 
         await prisma.queueItem.createMany({
@@ -204,7 +358,7 @@ export function setupSocketHandlers(io: Server) {
         }
 
         // Broadcast to all users in the room including sender
-        io.to(roomId).emit('update_queue', { queue });
+        io.to(roomId).emit('queue_updated', { queue });
       } catch (error) {
         console.error('Update queue error:', error);
         socket.emit('error', { message: 'Failed to update queue' });

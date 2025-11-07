@@ -74,10 +74,10 @@ class ApiService {
   }
 
   // Room endpoints
-  async createRoom(name: string) {
+  async createRoom(name: string, tier: 'free' | 'premium' = 'free', isPublic: boolean = true) {
     return this.request<{ room: any }>('/rooms', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, tier, isPublic }),
     });
   }
 
@@ -95,10 +95,65 @@ class ApiService {
     });
   }
 
+  async upgradeRoom(roomId: string) {
+    return this.request<{ room: any }>(`/rooms/${roomId}/upgrade`, {
+      method: 'POST',
+    });
+  }
+
+  // Room member endpoints
+  async getRoomMembers(roomId: string) {
+    return this.request<{ members: any[] }>(`/rooms/${roomId}/members`);
+  }
+
+  async addRoomMember(roomId: string, userId: string, role: 'viewer' | 'member' | 'moderator' = 'viewer') {
+    return this.request<{ member: any }>(`/rooms/${roomId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, role }),
+    });
+  }
+
+  async updateMemberRole(roomId: string, userId: string, role: 'viewer' | 'member' | 'moderator') {
+    return this.request<{ member: any }>(`/rooms/${roomId}/members/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  async removeMember(roomId: string, userId: string) {
+    return this.request<{ success: boolean }>(`/rooms/${roomId}/members/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Permission endpoints
+  async getRoomPermissions(roomId: string) {
+    return this.request<{ permissions: any }>(`/rooms/${roomId}/permissions`);
+  }
+
+  async updateRoomPermissions(roomId: string, permissions: Partial<{
+    canPlay: string;
+    canPause: string;
+    canSeek: string;
+    canChangeVideo: string;
+    canAddToQueue: string;
+    canRemoveFromQueue: string;
+    canReorderQueue: string;
+    canClearQueue: string;
+    canInviteUsers: string;
+    canKickUsers: string;
+    canChangeSettings: string;
+  }>) {
+    return this.request<{ permissions: any }>(`/rooms/${roomId}/permissions`, {
+      method: 'PATCH',
+      body: JSON.stringify(permissions),
+    });
+  }
+
   // YouTube endpoints
-  async searchYouTube(query: string, maxResults: number = 10) {
-    return this.request<{ videos: any[] }>(
-      `/youtube/search?q=${encodeURIComponent(query)}&maxResults=${maxResults}`
+  async searchYouTube(query: string, maxResults: number = 10, useAI: boolean = false) {
+    return this.request<{ videos: any[]; useAI?: boolean; message?: string }>(
+      `/youtube/search?q=${encodeURIComponent(query)}&maxResults=${maxResults}&useAI=${useAI}`
     );
   }
 }

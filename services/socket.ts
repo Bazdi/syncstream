@@ -82,6 +82,14 @@ export class SocketService {
     this.socket?.emit('update_queue', { roomId, queue });
   }
 
+  addToQueue(roomId: string, video: { videoId: string; videoTitle: string }) {
+    this.socket?.emit('add_to_queue', { roomId, video });
+  }
+
+  removeFromQueue(roomId: string, videoId: string) {
+    this.socket?.emit('remove_from_queue', { roomId, videoId });
+  }
+
   // Event listeners
   onRoomState(callback: (state: RoomState) => void) {
     this.socket?.on('room_state', callback);
@@ -107,12 +115,20 @@ export class SocketService {
     this.socket?.on('update_queue', callback);
   }
 
+  onQueueUpdated(callback: (data: { queue: any[] }) => void) {
+    this.socket?.on('queue_updated', callback);
+  }
+
   onUserJoined(callback: (data: { userId: string }) => void) {
     this.socket?.on('user_joined', callback);
   }
 
   onUserLeft(callback: (data: { userId: string }) => void) {
     this.socket?.on('user_left', callback);
+  }
+
+  onError(callback: (data: { message: string }) => void) {
+    this.socket?.on('error', callback);
   }
 
   // Remove listeners
