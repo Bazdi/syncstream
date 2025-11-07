@@ -1,0 +1,5 @@
+{
+  "name": "SyncStream Treff",
+  "description": "Eine Watch2Gether-Alternative, um Videos synchron mit Freunden anzusehen. Enthält einen KI-Video-Guru, der komplexe Fragen zum Inhalt beantworten kann.",
+  "requestFramePermissions": []
+}
