@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { User, Video, Room, QueueItem, RoomPermissions, Role, PermissionLevel, RoomMember } from './types';
 import { apiService } from './services/api';
 import { socketService } from './services/socket';
@@ -34,6 +34,10 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
     const [showSearchResults, setShowSearchResults] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
 
+    // Loading States
+    const [loadingRooms, setLoadingRooms] = useState(false);
+    const [loadingRoom, setLoadingRoom] = useState(false);
+
     // Initialize socket connection
     useEffect(() => {
         const token = localStorage.getItem('auth_token');
@@ -56,15 +60,14 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
         if (!currentRoom) return;
 
         socketService.joinRoom(currentRoom.id);
-        loadRoomData();
 
         // Socket event listeners
         socketService.onRoomState((state) => {
             setCurrentVideoId(state.currentVideoId);
-            // Queue is updated separately via queue_updated event
         });
 
         socketService.onQueueUpdated((data) => {
+            // Reload queue when updated
             loadQueue();
         });
 
@@ -82,58 +85,102 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
         };
     }, [currentRoom?.id]);
 
+    // Load room data when currentRoom changes
+    useEffect(() => {
+        if (currentRoom) {
+            loadRoomData();
+        }
+    }, [currentRoom?.id]);
+
     const loadRooms = async () => {
-        const response = await apiService.getUserRooms();
-        if (response.data?.rooms) {
-            setRooms(response.data.rooms);
-            if (response.data.rooms.length > 0 && !currentRoom) {
-                selectRoom(response.data.rooms[0].id);
+        if (loadingRooms) return; // Prevent duplicate calls
+
+        setLoadingRooms(true);
+        try {
+            const response = await apiService.getUserRooms();
+            if (response.data?.rooms) {
+                setRooms(response.data.rooms);
+            } else if (response.error) {
+                setToastMessage(response.error);
             }
+        } catch (error) {
+            console.error('Failed to load rooms:', error);
+            setToastMessage('Failed to load rooms');
+        } finally {
+            setLoadingRooms(false);
         }
     };
 
     const selectRoom = async (roomId: string) => {
-        const response = await apiService.getRoom(roomId);
-        if (response.data?.room) {
-            setCurrentRoom(response.data.room);
+        if (loadingRoom) return; // Prevent duplicate calls
+
+        setLoadingRoom(true);
+        try {
+            const response = await apiService.getRoom(roomId);
+            if (response.data?.room) {
+                setCurrentRoom(response.data.room);
+                // Set initial queue from room data
+                if (response.data.room.queue) {
+                    setQueue(response.data.room.queue);
+                }
+                if (response.data.room.currentVideoId) {
+                    setCurrentVideoId(response.data.room.currentVideoId);
+                }
+            } else if (response.error) {
+                setToastMessage(response.error);
+            }
+        } catch (error) {
+            console.error('Failed to select room:', error);
+            setToastMessage('Failed to load room');
+        } finally {
+            setLoadingRoom(false);
         }
     };
 
     const loadRoomData = async () => {
         if (!currentRoom) return;
 
-        // Load permissions
-        const permResponse = await apiService.getRoomPermissions(currentRoom.id);
-        if (permResponse.data?.permissions) {
-            setRoomPermissions(permResponse.data.permissions);
-        }
+        try {
+            // Load permissions and members in parallel
+            const [permResponse, memberResponse] = await Promise.all([
+                apiService.getRoomPermissions(currentRoom.id),
+                apiService.getRoomMembers(currentRoom.id)
+            ]);
 
-        // Load members to determine user role
-        const memberResponse = await apiService.getRoomMembers(currentRoom.id);
-        if (memberResponse.data?.members) {
-            const currentMember = memberResponse.data.members.find(
-                (m: RoomMember) => m.userId === user.id
-            );
-            if (currentMember) {
-                setUserRole(currentMember.role);
-            } else if (currentRoom.ownerId === user.id) {
-                setUserRole('owner');
+            if (permResponse.data?.permissions) {
+                setRoomPermissions(permResponse.data.permissions);
             }
-        }
 
-        // Load queue
-        loadQueue();
+            if (memberResponse.data?.members) {
+                const currentMember = memberResponse.data.members.find(
+                    (m: RoomMember) => m.userId === user.id
+                );
+                if (currentMember) {
+                    setUserRole(currentMember.role);
+                } else if (currentRoom.ownerId === user.id) {
+                    setUserRole('owner');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load room data:', error);
+            setToastMessage('Failed to load room permissions');
+        }
     };
 
     const loadQueue = async () => {
         if (!currentRoom) return;
-        const response = await apiService.getRoom(currentRoom.id);
-        if (response.data?.room?.queue) {
-            setQueue(response.data.room.queue);
+
+        try {
+            const response = await apiService.getRoom(currentRoom.id);
+            if (response.data?.room?.queue) {
+                setQueue(response.data.room.queue);
+            }
+        } catch (error) {
+            console.error('Failed to load queue:', error);
         }
     };
 
-    const canPerformAction = (permission: PermissionLevel): boolean => {
+    const canPerformAction = useCallback((permission: PermissionLevel): boolean => {
         if (!userRole || !roomPermissions) return false;
 
         const roleLevel: Record<Role, number> = {
@@ -151,7 +198,7 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
         };
 
         return roleLevel[userRole] >= permissionLevel[permission];
-    };
+    }, [userRole, roomPermissions]);
 
     // Simple regex to find YouTube links in markdown
     const YOUTUBE_REGEX = /\[([^\]]+)\]\((https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)[^\)]*)\)/g;
@@ -176,16 +223,23 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
         setShowSearchResults(true);
         setSearchResults([]);
 
-        const response = await apiService.searchYouTube(query, 10, useAI);
-        if (response.data?.videos) {
-            const videos = response.data.videos.map((v: any) => ({
-                title: v.title,
-                url: v.videoId,
-            }));
-            setSearchResults(videos);
+        try {
+            const response = await apiService.searchYouTube(query, 10, useAI);
+            if (response.data?.videos) {
+                const videos = response.data.videos.map((v: any) => ({
+                    title: v.title,
+                    url: v.videoId,
+                }));
+                setSearchResults(videos);
+            } else if (response.error) {
+                setToastMessage(response.error);
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+            setToastMessage('Search failed');
+        } finally {
+            setIsSearching(false);
         }
-
-        setIsSearching(false);
     };
 
     const handleAddVideo = (video: Video) => {
@@ -237,7 +291,7 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
     const handleCreateRoom = async (roomId: string) => {
         setShowRoomCreation(false);
         await loadRooms();
-        selectRoom(roomId);
+        await selectRoom(roomId);
         setToastMessage('Room created successfully!');
     };
 
@@ -267,36 +321,45 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
                     <div className="max-w-2xl w-full">
                         <h2 className="text-3xl font-bold mb-6 text-center">Your Rooms</h2>
 
-                        <div className="grid gap-4 mb-6">
-                            {rooms.map((room) => (
-                                <div
-                                    key={room.id}
-                                    onClick={() => selectRoom(room.id)}
-                                    className="bg-gray-800 rounded-lg p-6 hover:bg-gray-700 cursor-pointer transition-colors border border-gray-700"
-                                >
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <h3 className="text-xl font-semibold text-white">{room.name}</h3>
-                                            <p className="text-sm text-gray-400 mt-1">
-                                                {room.isPublic ? '🌍 Public' : '🔒 Private'} •{' '}
-                                                {room.tier === 'premium' ? (
-                                                    <span className="text-yellow-400">⭐ Premium</span>
-                                                ) : (
-                                                    <span>Free</span>
-                                                )}
-                                            </p>
+                        {loadingRooms ? (
+                            <div className="text-center text-gray-400 py-8">Loading rooms...</div>
+                        ) : rooms.length === 0 ? (
+                            <div className="text-center text-gray-400 py-8">
+                                <p className="mb-4">No rooms yet. Create your first room!</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4 mb-6">
+                                {rooms.map((room) => (
+                                    <div
+                                        key={room.id}
+                                        onClick={() => selectRoom(room.id)}
+                                        className="bg-gray-800 rounded-lg p-6 hover:bg-gray-700 cursor-pointer transition-colors border border-gray-700"
+                                    >
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <h3 className="text-xl font-semibold text-white">{room.name}</h3>
+                                                <p className="text-sm text-gray-400 mt-1">
+                                                    {room.isPublic ? '🌍 Public' : '🔒 Private'} •{' '}
+                                                    {room.tier === 'premium' ? (
+                                                        <span className="text-yellow-400">⭐ Premium</span>
+                                                    ) : (
+                                                        <span>Free</span>
+                                                    )}
+                                                </p>
+                                            </div>
+                                            <span className="text-sm text-gray-400">
+                                                {room.ownerId === user.id ? '👑 Owner' : 'Member'}
+                                            </span>
                                         </div>
-                                        <span className="text-sm text-gray-400">
-                                            {room.ownerId === user.id ? '👑 Owner' : 'Member'}
-                                        </span>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        )}
 
                         <button
                             onClick={() => setShowRoomCreation(true)}
-                            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors"
+                            disabled={loadingRooms}
+                            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             + Create New Room
                         </button>
@@ -365,6 +428,8 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
                             setCurrentRoom(null);
                             setQueue([]);
                             setCurrentVideoId(null);
+                            setRoomPermissions(null);
+                            setUserRole(null);
                         }}
                         className="bg-gray-700 hover:bg-gray-600 transition-colors px-3 py-2 rounded-md text-sm"
                     >

@@ -99,9 +99,21 @@ router.get('/:roomId', authenticate, async (req, res) => {
             id: true,
             username: true,
             email: true,
+            avatarUrl: true,
+            subscriptionStatus: true,
           }
         },
         queue: {
+          include: {
+            addedByUser: {
+              select: {
+                id: true,
+                username: true,
+                avatarUrl: true,
+                subscriptionStatus: true,
+              }
+            }
+          },
           orderBy: {
             order: 'asc'
           }
@@ -128,7 +140,25 @@ router.get('/user/my-rooms', authenticate, async (req: any, res) => {
         ownerId: req.userId,
       },
       include: {
+        owner: {
+          select: {
+            id: true,
+            username: true,
+            avatarUrl: true,
+            subscriptionStatus: true,
+          }
+        },
         queue: {
+          include: {
+            addedByUser: {
+              select: {
+                id: true,
+                username: true,
+                avatarUrl: true,
+                subscriptionStatus: true,
+              }
+            }
+          },
           orderBy: {
             order: 'asc'
           }
