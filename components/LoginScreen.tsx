@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { UserIcon, AtSymbolIcon } from './icons';
+import { apiService } from '../services/api';
 
 interface LoginScreenProps {
-    onLogin: (user: User) => void;
+    onLogin: (user: User, token: string) => void;
 }
 
 type FormMode = 'login' | 'register';
@@ -13,16 +14,46 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        // In a real app, you'd have validation and an API call here.
-        // For this simulation, we just log the user in.
-        const userToLogin: User = {
-            username: mode === 'register' ? (username.trim() || 'Anonymous') : 'Guest',
-            email: email,
-        };
-        onLogin(userToLogin);
+        setLoading(true);
+        setError(null);
+
+        try {
+            if (mode === 'register') {
+                // Register new user
+                const response = await apiService.register(
+                    username.trim() || 'Anonymous',
+                    email.trim(),
+                    password
+                );
+
+                if (response.data?.user && response.data?.token) {
+                    apiService.setToken(response.data.token);
+                    onLogin(response.data.user, response.data.token);
+                } else {
+                    setError(response.error || 'Registration failed');
+                }
+            } else {
+                // Login existing user
+                const response = await apiService.login(email.trim(), password);
+
+                if (response.data?.user && response.data?.token) {
+                    apiService.setToken(response.data.token);
+                    onLogin(response.data.user, response.data.token);
+                } else {
+                    setError(response.error || 'Login failed');
+                }
+            }
+        } catch (err) {
+            console.error('Auth error:', err);
+            setError('An unexpected error occurred');
+        } finally {
+            setLoading(false);
+        }
     };
     
     return (
@@ -97,18 +128,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                             />
                         </div>
 
+                        {error && (
+                            <div className="bg-red-900 bg-opacity-30 border border-red-600 rounded-lg p-3">
+                                <p className="text-red-400 text-sm">{error}</p>
+                            </div>
+                        )}
+
                         <button
                             type="submit"
-                            className="w-full bg-cyan-600 text-white font-bold py-2 px-4 rounded-md hover:bg-cyan-500 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500"
+                            disabled={loading}
+                            className="w-full bg-cyan-600 text-white font-bold py-2 px-4 rounded-md hover:bg-cyan-500 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {mode === 'login' ? 'Log In' : 'Create Account'}
+                            {loading ? 'Please wait...' : (mode === 'login' ? 'Log In' : 'Create Account')}
                         </button>
                     </form>
-                    <div className="mt-6 text-center">
-                        <p className="text-xs text-gray-500">
-                           This is a frontend simulation. No data is sent to a server.
-                        </p>
-                    </div>
                 </div>
              </div>
         </div>
