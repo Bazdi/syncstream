@@ -2,11 +2,15 @@
 import React, { useState } from 'react';
 import VideoQueue from './VideoQueue';
 import AIGuru from './AIGuru';
-import { Video } from '../types';
+import { Video, QueueItem, User } from '../types';
 
 interface RoomManagerProps {
-    queue: Video[];
+    queue: QueueItem[];
     currentVideoId: string | null;
+    currentUser: User | null;
+    canRemoveFromQueue: boolean;
+    canClearQueue: boolean;
+    canChangeVideo: boolean;
     onSelectVideo: (videoId: string) => void;
     onRemoveVideo: (videoId: string) => void;
     onClearQueue: () => void;
@@ -42,6 +46,10 @@ const RoomManager: React.FC<RoomManagerProps> = (props) => {
                     <VideoQueue
                         queue={props.queue}
                         currentVideoId={props.currentVideoId}
+                        currentUser={props.currentUser}
+                        canRemoveFromQueue={props.canRemoveFromQueue}
+                        canClearQueue={props.canClearQueue}
+                        canChangeVideo={props.canChangeVideo}
                         onSelectVideo={props.onSelectVideo}
                         onRemoveVideo={props.onRemoveVideo}
                         onClearQueue={props.onClearQueue}
